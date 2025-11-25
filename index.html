@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Museum Object Records Demo with AAT Lookup</title>
+  <title>Museum Object Records Demo with Getty Reconcile</title>
   <style>
     body { font-family: sans-serif; padding: 20px; }
     label { display:block; margin-top: 10px; }
@@ -16,12 +16,13 @@
     #columns { display: flex; gap: 50px; }
     #listColumn { flex: 1; }
     #tableColumn { flex: 2; }
+    .json-output { font-size: 0.85rem; color: #555; white-space: pre-wrap; margin-top: 4px; display:none; }
   </style>
 </head>
 <body>
-  <h1>Museum Object Records Demo with AAT Lookup</h1>
+  <h1>Museum Object Records Demo with Getty Reconcile</h1>
 
-  <p>Enter your MuseumData.uk API token and an object name (or keyword). The token is stored only in memory and clears when the page reloads.</p>
+  <p>Enter your MuseumData.uk API token and an object name (or keyword).</p>
 
   <label>API Token:<br>
     <input id="token" type="password" placeholder="Enter API token" />
@@ -48,7 +49,6 @@
             <th>Object Names</th>
             <th>Title</th>
             <th>Collection</th>
-            <th>AAT PID</th>
             <th>Full Record</th>
           </tr>
         </thead>
@@ -59,8 +59,7 @@
 
   <script>
     const statusEl = document.getElementById('status');
-    const AAT_SPARQL_ENDPOINT = "https://vocab.getty.edu/sparql";
-    const aatCache = {}; // simple in-memory cache for AAT PIDs
+    const reconcileCache = {};
 
     async function fetchAllRecords(token, objectName) {
       statusEl.textContent = 'Fetching records...';
@@ -72,11 +71,9 @@
           method: 'GET',
           headers: { 'Authorization': `Bearer ${token}` }
         });
-
         if (!res.ok) {
           throw new Error('API request failed: ' + res.status + ' ' + (await res.text()));
         }
-
         const data = await res.json();
         allData = allData.concat(data.data || []);
         statusEl.textContent = `Fetched ${allData.length} of ${data.stats.total} records...`;
@@ -99,81 +96,85 @@
       return freq;
     }
 
+    async function reconcileTerm(term) {
+      if (reconcileCache[term]) return reconcileCache[term];
+
+      const endpoint = 'https://services.getty.edu/vocab/reconcile/';
+      const body = { queries: { q0: { query: term, type: "/aat" } } };
+
+      try {
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        if (!res.ok) throw new Error(`Reconcile failed: ${res.status}`);
+        const data = await res.json();
+        const candidates = data.queries.q0.candidates || [];
+        reconcileCache[term] = candidates;
+        return candidates;
+      } catch (err) {
+        console.error('Reconcile error:', err);
+        reconcileCache[term] = [{ name: 'Error / CORS?', score: 0 }];
+        return reconcileCache[term];
+      }
+    }
+
     function renderList(freqMap, records) {
       const container = document.getElementById('objectNamesList');
       container.innerHTML = '';
+
       Object.entries(freqMap)
         .sort((a, b) => b[1] - a[1])
         .forEach(([name, count]) => {
           const p = document.createElement('p');
-          p.textContent = `${name} (${count})`;
-          p.addEventListener('click', () => renderTable(name, records));
+          p.textContent = `${name} (${count}) — Reconciling...`;
           container.appendChild(p);
+
+          reconcileTerm(name).then(candidates => {
+            const best = candidates[0] || { name: 'No match', score: 0 };
+            p.textContent = `${name} (${count}) — Best: ${best.name} (score: ${best.score})`;
+
+            const toggle = document.createElement('button');
+            toggle.textContent = 'Show Candidates';
+            p.appendChild(toggle);
+
+            const jsonDiv = document.createElement('div');
+            jsonDiv.className = 'json-output';
+            jsonDiv.textContent = JSON.stringify(candidates, null, 2);
+            p.appendChild(jsonDiv);
+
+            toggle.addEventListener('click', () => {
+              const isHidden = jsonDiv.style.display === 'none';
+              jsonDiv.style.display = isHidden ? 'block' : 'none';
+              toggle.textContent = isHidden ? 'Hide Candidates' : 'Show Candidates';
+            });
+          });
+
+          p.addEventListener('click', () => renderTable(name, records));
         });
     }
 
-    async function getAatPid(term) {
-      // Check cache first
-      if (aatCache[term]) return aatCache[term];
-
-      const query = `
-        PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
-        PREFIX aat: <http://vocab.getty.edu/aat/>
-        SELECT ?term ?pid WHERE {
-          ?term a skos:Concept ;
-                skos:inScheme aat: ;
-                (skos:prefLabel|skos:altLabel) ?label .
-          FILTER(LCASE(STR(?label)) = LCASE("${term}"))
-          BIND(STRAFTER(STR(?term), "http://vocab.getty.edu/aat/") AS ?pid)
-        }
-        LIMIT 1
-      `;
-      const url = AAT_SPARQL_ENDPOINT + "?query=" + encodeURIComponent(query);
-      try {
-        const res = await fetch(url, { headers: { "Accept": "application/sparql-results+json" } });
-        if (!res.ok) return null;
-        const data = await res.json();
-        const bindings = data.results.bindings;
-        const pid = bindings.length ? bindings[0].pid.value : null;
-        aatCache[term] = pid || 'No match';
-        return aatCache[term];
-      } catch (err) {
-        console.error('AAT lookup error for term:', term, err);
-        aatCache[term] = 'Error';
-        return 'Error';
-      }
-    }
-
-    async function renderTable(objectName, records) {
+    function renderTable(objectName, records) {
       const tbody = document.querySelector('#recordsTable tbody');
       tbody.innerHTML = '';
 
       const filtered = records.filter(rec => rec?.summary?.object_name?.includes(objectName));
-      for (const rec of filtered) {
+      filtered.forEach(rec => {
         const tr = document.createElement('tr');
 
-        // Object Names
         const objNames = document.createElement('td');
         objNames.textContent = (rec.summary.object_name || []).join(', ');
         tr.appendChild(objNames);
 
-        // Title
         const title = document.createElement('td');
         title.textContent = (rec.summary.title || []).join(', ');
         tr.appendChild(title);
 
-        // Collection
         const collection = document.createElement('td');
         collection.textContent = (rec.summary.collection || []).join(', ');
         tr.appendChild(collection);
 
-        // AAT PID
-        const aatTd = document.createElement('td');
-        const firstName = (rec.summary.object_name || [])[0]; // first object name
-        aatTd.textContent = 'Loading...';
-        tr.appendChild(aatTd);
-
-        // Full record link
         const linkTd = document.createElement('td');
         const link = document.createElement('a');
         link.href = `https://museumdata.uk/object-search/object/?pid=${(rec.summary.pid || [])[0]}`;
@@ -183,16 +184,7 @@
         tr.appendChild(linkTd);
 
         tbody.appendChild(tr);
-
-        // Fetch AAT PID asynchronously with caching
-        if (firstName) {
-          getAatPid(firstName).then(pid => {
-            aatTd.textContent = pid;
-          });
-        } else {
-          aatTd.textContent = 'No name';
-        }
-      }
+      });
     }
 
     document.getElementById('runBtn').addEventListener('click', async () => {
