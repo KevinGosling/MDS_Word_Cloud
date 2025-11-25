@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Museum Object Word Cloud Demo</title>
+  <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+  <script src="https://cdn.jsdelivr.net/npm/d3-cloud"></script>
+  <style>
+    body { font-family: sans-serif; padding: 20px; }
+    #cloud { width: 800px; height: 500px; border: 1px solid #ddd; margin-top: 20px; }
+    label { display:block; margin-top: 10px; }
+    input, button { padding: 6px; font-size: 1rem; }
+  </style>
+</head>
+<body>
+  <h1>Museum Object Word Cloud Demo</h1>
+
+  <p>Enter your MuseumData.uk API token and an object name (or keyword). The token is stored only in memory and clears when the page reloads.</p>
+
+  <label>API Token:<br>
+    <input id="token" type="password" placeholder="Enter API token" />
+  </label>
+
+  <label>Search Term (object name):<br>
+    <input id="objectName" type="text" placeholder="e.g. sceatta, brooch, vase..." />
+  </label>
+
+  <button id="runBtn">Generate Word Cloud</button>
+
+  <div id="cloud"></div>
+
+  <script>
+    async function fetchRecords(token, objectName) {
+      const params = new URLSearchParams({
+        q: objectName,
+        rows: 200  // adjust as needed
+      });
+      const url = `https://mds-data.ciim.k-int.com/api/v2/search?${params.toString()}`;
+
+      const res = await fetch(url, {
+        method: "GET",
+        headers: {
+          "Authorization": `Bearer ${token}`
+        }
+      });
+
+      if (!res.ok) {
+        throw new Error("API request failed: " + res.status + " " + (await res.text()));
+      }
+
+      return res.json();
+    }
+
+    function extractWords(records) {
+      const words = [];
+
+      for (const rec of records?.results || []) {  // adjust path by looking at API response
+        const name = rec?.object_name || rec?.object?.object_name;  
+        if (!name) continue;
+        const parts = name.toLowerCase().split(/[^a-z0-9]+/);
+        for (const p of parts) if (p) words.push(p);
+      }
+      return words;
+    }
+
+    function renderWordCloud(freqMap) {
+      document.getElementById("cloud").innerHTML = "";
+
+      const entries = Object.entries(freqMap).map(([text, size]) => ({ text, size: size * 10 }));
+
+      const layout = d3.layout.cloud()
+        .size([800, 500])
+        .words(entries)
+        .padding(2)
+        .rotate(() => ~~(Math.random() * 2) * 90)
+        .font("sans-serif")
+        .fontSize(d => d.size)
+        .on("end", draw);
+
+      layout.start();
+
+      function draw(words) {
+        const svg = d3.select("#cloud").append("svg")
+          .attr("width", 800)
+          .attr("height", 500)
+          .append("g")
+          .attr("transform", "translate(400,250)");
+
+        svg.selectAll("text")
+          .data(words)
+          .enter().append("text")
+          .style("font-size", d => d.size + "px")
+          .style("font-family", "sans-serif")
+          .style("fill", () => `hsl(${Math.random() * 360},70%,50%)`)
+          .attr("text-anchor", "middle")
+          .attr("transform", d => `translate(${[d.x, d.y]})rotate(${d.rotate})`)
+          .text(d => d.text);
+      }
+    }
+
+    document.getElementById("runBtn").addEventListener("click", async () => {
+      const token = document.getElementById("token").value.trim();
+      const objectName = document.getElementById("objectName").value.trim();
+
+      if (!token || !objectName) {
+        alert("Please enter both token and a search term.");
+        return;
+      }
+
+      try {
+        const data = await fetchRecords(token, objectName);
+        const words = extractWords(data);
+        const freq = {};
+        for (const w of words) freq[w] = (freq[w] || 0) + 1;
+        renderWordCloud(freq);
+      } catch (e) {
+        alert("Error: " + e.message);
+        console.error(e);
+      }
+    });
+  </script>
+</body>
+</html>
