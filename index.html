@@ -35,32 +35,42 @@
   <script>
     const statusEl = document.getElementById('status');
 
-    async function fetchRecords(token, objectName) {
+    async function fetchAllRecords(token, objectName) {
       statusEl.textContent = 'Fetching records...';
+      let allData = [];
+      let from = 0;
+      const pageSize = 50;
+      let total = 0;
 
-      const params = new URLSearchParams({ q: objectName, rows: 200 });
-      const url = `https://mds-data.ciim.k-int.com/api/v2/search?${params.toString()}`;
+      do {
+        const url = `https://mds-data.ciim.k-int.com/api/v2/search?field=object_name:${encodeURIComponent(objectName)}&pageSize=${pageSize}&from=${from}`;
+        const res = await fetch(url, {
+          method: 'GET',
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
 
-      const res = await fetch(url, {
-        method: 'GET',
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
+        if (!res.ok) {
+          throw new Error('API request failed: ' + res.status + ' ' + (await res.text()));
+        }
 
-      if (!res.ok) {
-        throw new Error('API request failed: ' + res.status + ' ' + (await res.text()));
-      }
+        const data = await res.json();
+        allData = allData.concat(data.data || []);
+        total = data.stats?.total || 0;
+        from += pageSize;
+        statusEl.textContent = `Fetched ${allData.length} of ${total} records...`;
+      } while (allData.length < total);
 
-      statusEl.textContent = 'Records fetched successfully.';
-      return res.json();
+      statusEl.textContent = `All ${allData.length} records fetched.`;
+      return allData;
     }
 
     function extractWords(records) {
       const words = [];
-      for (const rec of records?.results || []) {
-        const name = rec?.object_name || rec?.object?.object_name;
-        if (!name) continue;
-        const parts = name.toLowerCase().split(/[^a-z0-9]+/);
-        for (const p of parts) if (p) words.push(p);
+      for (const rec of records) {
+        const names = rec?.summary?.object_name || [];
+        for (const name of names) {
+          name.toLowerCase().split(/[^a-z0-9]+/).forEach(w => { if (w) words.push(w); });
+        }
       }
       return words;
     }
@@ -111,13 +121,12 @@
       }
 
       try {
-        statusEl.textContent = 'Starting...';
-        const data = await fetchRecords(token, objectName);
-        const words = extractWords(data);
-        if (words.length === 0) {
-          statusEl.textContent = 'No object names found for this search.';
+        const data = await fetchAllRecords(token, objectName);
+        if (data.length === 0) {
+          statusEl.textContent = 'No records found for this search.';
           return;
         }
+        const words = extractWords(data);
         const freq = {};
         for (const w of words) freq[w] = (freq[w] || 0) + 1;
         renderWordCloud(freq);
