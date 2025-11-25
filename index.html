@@ -12,6 +12,7 @@
     label { display:block; margin-top: 10px; }
     input, button { padding: 6px; font-size: 1rem; }
     #status { margin-top: 15px; font-style: italic; color: #333; font-weight: bold; }
+    #objectNamesList { margin-top: 20px; }
   </style>
 </head>
 <body>
@@ -31,6 +32,7 @@
 
   <div id="status">Status will appear here...</div>
   <div id="cloud"></div>
+  <div id="objectNamesList"></div>
 
   <script>
     const statusEl = document.getElementById('status');
@@ -60,15 +62,16 @@
       return allData;
     }
 
-    function extractWords(records) {
-      const words = [];
+    function extractObjectNames(records) {
+      const freq = {};
       for (const rec of records) {
         const names = rec?.summary?.object_name || [];
         for (const name of names) {
-          name.toLowerCase().split(/[^a-z0-9]+/).forEach(w => { if (w) words.push(w); });
+          const cleanName = name.trim();
+          if (cleanName) freq[cleanName] = (freq[cleanName] || 0) + 1;
         }
       }
-      return words;
+      return freq;
     }
 
     function renderWordCloud(freqMap) {
@@ -76,13 +79,10 @@
       document.getElementById('cloud').innerHTML = '';
 
       const entries = Object.entries(freqMap)
-        .map(([text, count]) => ({ text, size: 10 + count * 10 })) // ensure minimum size
-        .filter(d => d.size > 0);
-
-      console.log('Words for cloud:', entries);
+        .map(([text, count]) => ({ text, size: 10 + count * 10 }));
 
       if (entries.length === 0) {
-        statusEl.textContent = 'No words to display in the cloud.';
+        statusEl.textContent = 'No object names to display in the cloud.';
         return;
       }
 
@@ -113,7 +113,19 @@
           statusEl.textContent = 'Word cloud generated.';
         });
 
-      setTimeout(() => layout.start(), 0); // async start
+      setTimeout(() => layout.start(), 0);
+    }
+
+    function renderList(freqMap) {
+      const container = document.getElementById('objectNamesList');
+      container.innerHTML = '';
+      Object.entries(freqMap)
+        .sort((a, b) => b[1] - a[1])
+        .forEach(([name, count]) => {
+          const p = document.createElement('p');
+          p.textContent = `${name} (${count})`;
+          container.appendChild(p);
+        });
     }
 
     document.getElementById('runBtn').addEventListener('click', async () => {
@@ -131,10 +143,10 @@
           statusEl.textContent = 'No records found for this search.';
           return;
         }
-        const words = extractWords(data);
-        const freq = {};
-        for (const w of words) freq[w] = (freq[w] || 0) + 1;
-        renderWordCloud(freq);
+
+        const freqMap = extractObjectNames(data);
+        renderWordCloud(freqMap);
+        renderList(freqMap);
       } catch (e) {
         statusEl.textContent = 'Error: ' + e.message;
         console.error(e);
