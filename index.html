@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Museum Object Records Demo</title>
+  <title>Museum Object Records Demo with AAT Lookup</title>
   <style>
     body { font-family: sans-serif; padding: 20px; }
     label { display:block; margin-top: 10px; }
@@ -19,7 +19,7 @@
   </style>
 </head>
 <body>
-  <h1>Museum Object Records Demo</h1>
+  <h1>Museum Object Records Demo with AAT Lookup</h1>
 
   <p>Enter your MuseumData.uk API token and an object name (or keyword). The token is stored only in memory and clears when the page reloads.</p>
 
@@ -48,6 +48,7 @@
             <th>Object Names</th>
             <th>Title</th>
             <th>Collection</th>
+            <th>AAT PID</th>
             <th>Full Record</th>
           </tr>
         </thead>
@@ -58,6 +59,8 @@
 
   <script>
     const statusEl = document.getElementById('status');
+    const AAT_SPARQL_ENDPOINT = "https://vocab.getty.edu/sparql";
+    const aatCache = {}; // simple in-memory cache for AAT PIDs
 
     async function fetchAllRecords(token, objectName) {
       statusEl.textContent = 'Fetching records...';
@@ -109,12 +112,44 @@
         });
     }
 
-    function renderTable(objectName, records) {
+    async function getAatPid(term) {
+      // Check cache first
+      if (aatCache[term]) return aatCache[term];
+
+      const query = `
+        PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+        PREFIX aat: <http://vocab.getty.edu/aat/>
+        SELECT ?term ?pid WHERE {
+          ?term a skos:Concept ;
+                skos:inScheme aat: ;
+                (skos:prefLabel|skos:altLabel) ?label .
+          FILTER(LCASE(STR(?label)) = LCASE("${term}"))
+          BIND(STRAFTER(STR(?term), "http://vocab.getty.edu/aat/") AS ?pid)
+        }
+        LIMIT 1
+      `;
+      const url = AAT_SPARQL_ENDPOINT + "?query=" + encodeURIComponent(query);
+      try {
+        const res = await fetch(url, { headers: { "Accept": "application/sparql-results+json" } });
+        if (!res.ok) return null;
+        const data = await res.json();
+        const bindings = data.results.bindings;
+        const pid = bindings.length ? bindings[0].pid.value : null;
+        aatCache[term] = pid || 'No match';
+        return aatCache[term];
+      } catch (err) {
+        console.error('AAT lookup error for term:', term, err);
+        aatCache[term] = 'Error';
+        return 'Error';
+      }
+    }
+
+    async function renderTable(objectName, records) {
       const tbody = document.querySelector('#recordsTable tbody');
       tbody.innerHTML = '';
 
       const filtered = records.filter(rec => rec?.summary?.object_name?.includes(objectName));
-      filtered.forEach(rec => {
+      for (const rec of filtered) {
         const tr = document.createElement('tr');
 
         // Object Names
@@ -132,6 +167,12 @@
         collection.textContent = (rec.summary.collection || []).join(', ');
         tr.appendChild(collection);
 
+        // AAT PID
+        const aatTd = document.createElement('td');
+        const firstName = (rec.summary.object_name || [])[0]; // first object name
+        aatTd.textContent = 'Loading...';
+        tr.appendChild(aatTd);
+
         // Full record link
         const linkTd = document.createElement('td');
         const link = document.createElement('a');
@@ -142,7 +183,16 @@
         tr.appendChild(linkTd);
 
         tbody.appendChild(tr);
-      });
+
+        // Fetch AAT PID asynchronously with caching
+        if (firstName) {
+          getAatPid(firstName).then(pid => {
+            aatTd.textContent = pid;
+          });
+        } else {
+          aatTd.textContent = 'No name';
+        }
+      }
     }
 
     document.getElementById('runBtn').addEventListener('click', async () => {
