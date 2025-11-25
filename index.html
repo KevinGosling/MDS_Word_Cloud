@@ -3,20 +3,23 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Museum Object Word Cloud Demo</title>
-  <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
-  <script src="https://cdn.jsdelivr.net/npm/d3-cloud"></script>
+  <title>Museum Object Records Demo</title>
   <style>
     body { font-family: sans-serif; padding: 20px; }
-    #cloud { width: 800px; height: 500px; border: 1px solid #ddd; margin-top: 20px; }
     label { display:block; margin-top: 10px; }
     input, button { padding: 6px; font-size: 1rem; }
     #status { margin-top: 15px; font-style: italic; color: #333; font-weight: bold; }
-    #objectNamesList { margin-top: 20px; }
+    #objectNamesList p { cursor: pointer; color: blue; text-decoration: underline; }
+    #recordsTable { margin-top: 20px; border-collapse: collapse; width: 100%; }
+    #recordsTable th, #recordsTable td { border: 1px solid #ccc; padding: 8px; }
+    #recordsTable th { background-color: #f0f0f0; }
+    #columns { display: flex; gap: 50px; }
+    #listColumn { flex: 1; }
+    #tableColumn { flex: 2; }
   </style>
 </head>
 <body>
-  <h1>Museum Object Word Cloud Demo</h1>
+  <h1>Museum Object Records Demo</h1>
 
   <p>Enter your MuseumData.uk API token and an object name (or keyword). The token is stored only in memory and clears when the page reloads.</p>
 
@@ -28,11 +31,30 @@
     <input id="objectName" type="text" placeholder="e.g. sceatta, brooch, vase..." />
   </label>
 
-  <button id="runBtn">Generate Word Cloud</button>
+  <button id="runBtn">Fetch Records</button>
 
   <div id="status">Status will appear here...</div>
-  <div id="cloud"></div>
-  <div id="objectNamesList"></div>
+
+  <div id="columns">
+    <div id="listColumn">
+      <h2>Object Names</h2>
+      <div id="objectNamesList"></div>
+    </div>
+    <div id="tableColumn">
+      <h2>Records</h2>
+      <table id="recordsTable">
+        <thead>
+          <tr>
+            <th>Object Names</th>
+            <th>Title</th>
+            <th>Collection</th>
+            <th>Full Record</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
 
   <script>
     const statusEl = document.getElementById('status');
@@ -74,49 +96,7 @@
       return freq;
     }
 
-    function renderWordCloud(freqMap) {
-      statusEl.textContent = 'Building word cloud...';
-      document.getElementById('cloud').innerHTML = '';
-
-      const entries = Object.entries(freqMap)
-        .map(([text, count]) => ({ text, size: 10 + count * 10 }));
-
-      if (entries.length === 0) {
-        statusEl.textContent = 'No object names to display in the cloud.';
-        return;
-      }
-
-      const layout = d3.layout.cloud()
-        .size([800, 500])
-        .words(entries)
-        .padding(2)
-        .rotate(() => ~~(Math.random() * 2) * 90)
-        .font('sans-serif')
-        .fontSize(d => d.size)
-        .on('end', words => {
-          const svg = d3.select('#cloud').append('svg')
-            .attr('width', 800)
-            .attr('height', 500)
-            .append('g')
-            .attr('transform', 'translate(400,250)');
-
-          svg.selectAll('text')
-            .data(words)
-            .enter().append('text')
-            .style('font-size', d => d.size + 'px')
-            .style('font-family', 'sans-serif')
-            .style('fill', () => `hsl(${Math.random() * 360},70%,50%)`)
-            .attr('text-anchor', 'middle')
-            .attr('transform', d => `translate(${[d.x, d.y]})rotate(${d.rotate})`)
-            .text(d => d.text);
-
-          statusEl.textContent = 'Word cloud generated.';
-        });
-
-      setTimeout(() => layout.start(), 0);
-    }
-
-    function renderList(freqMap) {
+    function renderList(freqMap, records) {
       const container = document.getElementById('objectNamesList');
       container.innerHTML = '';
       Object.entries(freqMap)
@@ -124,8 +104,45 @@
         .forEach(([name, count]) => {
           const p = document.createElement('p');
           p.textContent = `${name} (${count})`;
+          p.addEventListener('click', () => renderTable(name, records));
           container.appendChild(p);
         });
+    }
+
+    function renderTable(objectName, records) {
+      const tbody = document.querySelector('#recordsTable tbody');
+      tbody.innerHTML = '';
+
+      const filtered = records.filter(rec => rec?.summary?.object_name?.includes(objectName));
+      filtered.forEach(rec => {
+        const tr = document.createElement('tr');
+
+        // Object Names
+        const objNames = document.createElement('td');
+        objNames.textContent = (rec.summary.object_name || []).join(', ');
+        tr.appendChild(objNames);
+
+        // Title
+        const title = document.createElement('td');
+        title.textContent = (rec.summary.title || []).join(', ');
+        tr.appendChild(title);
+
+        // Collection
+        const collection = document.createElement('td');
+        collection.textContent = (rec.summary.collection || []).join(', ');
+        tr.appendChild(collection);
+
+        // Full record link
+        const linkTd = document.createElement('td');
+        const link = document.createElement('a');
+        link.href = `https://museumdata.uk/object-search/object/?pid=${(rec.summary.pid || [])[0]}`;
+        link.textContent = 'Full record';
+        link.target = '_blank';
+        linkTd.appendChild(link);
+        tr.appendChild(linkTd);
+
+        tbody.appendChild(tr);
+      });
     }
 
     document.getElementById('runBtn').addEventListener('click', async () => {
@@ -138,15 +155,14 @@
       }
 
       try {
-        const data = await fetchAllRecords(token, objectName);
-        if (data.length === 0) {
+        const records = await fetchAllRecords(token, objectName);
+        if (records.length === 0) {
           statusEl.textContent = 'No records found for this search.';
           return;
         }
 
-        const freqMap = extractObjectNames(data);
-        renderWordCloud(freqMap);
-        renderList(freqMap);
+        const freqMap = extractObjectNames(records);
+        renderList(freqMap, records);
       } catch (e) {
         statusEl.textContent = 'Error: ' + e.message;
         console.error(e);
