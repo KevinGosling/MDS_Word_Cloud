@@ -11,6 +11,7 @@
     #cloud { width: 800px; height: 500px; border: 1px solid #ddd; margin-top: 20px; }
     label { display:block; margin-top: 10px; }
     input, button { padding: 6px; font-size: 1rem; }
+    #status { margin-top: 10px; font-style: italic; color: #555; }
   </style>
 </head>
 <body>
@@ -28,35 +29,34 @@
 
   <button id="runBtn">Generate Word Cloud</button>
 
+  <div id="status"></div>
   <div id="cloud"></div>
 
   <script>
     async function fetchRecords(token, objectName) {
-      const params = new URLSearchParams({
-        q: objectName,
-        rows: 200  // adjust as needed
-      });
+      const statusEl = document.getElementById('status');
+      statusEl.textContent = 'Fetching records...';
+
+      const params = new URLSearchParams({ q: objectName, rows: 200 });
       const url = `https://mds-data.ciim.k-int.com/api/v2/search?${params.toString()}`;
 
       const res = await fetch(url, {
-        method: "GET",
-        headers: {
-          "Authorization": `Bearer ${token}`
-        }
+        method: 'GET',
+        headers: { 'Authorization': `Bearer ${token}` }
       });
 
       if (!res.ok) {
-        throw new Error("API request failed: " + res.status + " " + (await res.text()));
+        throw new Error('API request failed: ' + res.status + ' ' + (await res.text()));
       }
 
+      statusEl.textContent = 'Records fetched successfully.';
       return res.json();
     }
 
     function extractWords(records) {
       const words = [];
-
-      for (const rec of records?.results || []) {  // adjust path by looking at API response
-        const name = rec?.object_name || rec?.object?.object_name;  
+      for (const rec of records?.results || []) {
+        const name = rec?.object_name || rec?.object?.object_name;
         if (!name) continue;
         const parts = name.toLowerCase().split(/[^a-z0-9]+/);
         for (const p of parts) if (p) words.push(p);
@@ -65,7 +65,9 @@
     }
 
     function renderWordCloud(freqMap) {
-      document.getElementById("cloud").innerHTML = "";
+      const statusEl = document.getElementById('status');
+      statusEl.textContent = 'Building word cloud...';
+      document.getElementById('cloud').innerHTML = '';
 
       const entries = Object.entries(freqMap).map(([text, size]) => ({ text, size: size * 10 }));
 
@@ -74,48 +76,54 @@
         .words(entries)
         .padding(2)
         .rotate(() => ~~(Math.random() * 2) * 90)
-        .font("sans-serif")
+        .font('sans-serif')
         .fontSize(d => d.size)
-        .on("end", draw);
+        .on('end', words => {
+          const svg = d3.select('#cloud').append('svg')
+            .attr('width', 800)
+            .attr('height', 500)
+            .append('g')
+            .attr('transform', 'translate(400,250)');
+
+          svg.selectAll('text')
+            .data(words)
+            .enter().append('text')
+            .style('font-size', d => d.size + 'px')
+            .style('font-family', 'sans-serif')
+            .style('fill', () => `hsl(${Math.random() * 360},70%,50%)`)
+            .attr('text-anchor', 'middle')
+            .attr('transform', d => `translate(${[d.x, d.y]})rotate(${d.rotate})`)
+            .text(d => d.text);
+
+          statusEl.textContent = 'Word cloud generated.';
+        });
 
       layout.start();
-
-      function draw(words) {
-        const svg = d3.select("#cloud").append("svg")
-          .attr("width", 800)
-          .attr("height", 500)
-          .append("g")
-          .attr("transform", "translate(400,250)");
-
-        svg.selectAll("text")
-          .data(words)
-          .enter().append("text")
-          .style("font-size", d => d.size + "px")
-          .style("font-family", "sans-serif")
-          .style("fill", () => `hsl(${Math.random() * 360},70%,50%)`)
-          .attr("text-anchor", "middle")
-          .attr("transform", d => `translate(${[d.x, d.y]})rotate(${d.rotate})`)
-          .text(d => d.text);
-      }
     }
 
-    document.getElementById("runBtn").addEventListener("click", async () => {
-      const token = document.getElementById("token").value.trim();
-      const objectName = document.getElementById("objectName").value.trim();
+    document.getElementById('runBtn').addEventListener('click', async () => {
+      const statusEl = document.getElementById('status');
+      const token = document.getElementById('token').value.trim();
+      const objectName = document.getElementById('objectName').value.trim();
 
       if (!token || !objectName) {
-        alert("Please enter both token and a search term.");
+        alert('Please enter both token and a search term.');
         return;
       }
 
       try {
+        statusEl.textContent = 'Starting...';
         const data = await fetchRecords(token, objectName);
         const words = extractWords(data);
+        if (words.length === 0) {
+          statusEl.textContent = 'No object names found for this search.';
+          return;
+        }
         const freq = {};
         for (const w of words) freq[w] = (freq[w] || 0) + 1;
         renderWordCloud(freq);
       } catch (e) {
-        alert("Error: " + e.message);
+        statusEl.textContent = 'Error: ' + e.message;
         console.error(e);
       }
     });
