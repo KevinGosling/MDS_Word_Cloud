@@ -38,12 +38,9 @@
     async function fetchAllRecords(token, objectName) {
       statusEl.textContent = 'Fetching records...';
       let allData = [];
-      let from = 0;
-      const pageSize = 50;
-      let total = 0;
+      let url = `https://mds-data.ciim.k-int.com/api/v2/search?q=${encodeURIComponent(objectName)}&field=${encodeURIComponent('object_name:' + objectName)}`;
 
-      do {
-        const url = `https://mds-data.ciim.k-int.com/api/v2/search?q=${encodeURIComponent(objectName)}&field=${encodeURIComponent('object_name:' + objectName)}&pageSize=${pageSize}&from=${from}`;
+      while (url) {
         const res = await fetch(url, {
           method: 'GET',
           headers: { 'Authorization': `Bearer ${token}` }
@@ -55,10 +52,9 @@
 
         const data = await res.json();
         allData = allData.concat(data.data || []);
-        total = data.stats?.total || 0;
-        from += pageSize;
-        statusEl.textContent = `Fetched ${allData.length} of ${total} records...`;
-      } while (allData.length < total);
+        statusEl.textContent = `Fetched ${allData.length} of ${data.stats.total} records...`;
+        url = data.navigation?.next || null;
+      }
 
       statusEl.textContent = `All ${allData.length} records fetched.`;
       return allData;
@@ -79,7 +75,16 @@
       statusEl.textContent = 'Building word cloud...';
       document.getElementById('cloud').innerHTML = '';
 
-      const entries = Object.entries(freqMap).map(([text, size]) => ({ text, size: size * 10 }));
+      const entries = Object.entries(freqMap)
+        .map(([text, count]) => ({ text, size: 10 + count * 10 })) // ensure minimum size
+        .filter(d => d.size > 0);
+
+      console.log('Words for cloud:', entries);
+
+      if (entries.length === 0) {
+        statusEl.textContent = 'No words to display in the cloud.';
+        return;
+      }
 
       const layout = d3.layout.cloud()
         .size([800, 500])
@@ -108,7 +113,7 @@
           statusEl.textContent = 'Word cloud generated.';
         });
 
-      layout.start();
+      setTimeout(() => layout.start(), 0); // async start
     }
 
     document.getElementById('runBtn').addEventListener('click', async () => {
