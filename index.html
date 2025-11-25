@@ -43,7 +43,7 @@
       let total = 0;
 
       do {
-        const url = `https://mds-data.ciim.k-int.com/api/v2/search?field=object_name:${encodeURIComponent(objectName)}&pageSize=${pageSize}&from=${from}`;
+        const url = `https://mds-data.ciim.k-int.com/api/v2/search?q=${encodeURIComponent(objectName)}&field=${encodeURIComponent('object_name:' + objectName)}&pageSize=${pageSize}&from=${from}`;
         const res = await fetch(url, {
           method: 'GET',
           headers: { 'Authorization': `Bearer ${token}` }
