@@ -1,215 +1,242 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Museum Object Records Demo with Getty Reconcile</title>
-  <style>
-    body { font-family: sans-serif; padding: 20px; }
-    label { display:block; margin-top: 10px; }
-    input, button { padding: 6px; font-size: 1rem; }
-    #status { margin-top: 15px; font-style: italic; color: #333; font-weight: bold; }
-    #objectNamesList p { cursor: pointer; color: blue; text-decoration: underline; }
-    #recordsTable { margin-top: 20px; border-collapse: collapse; width: 100%; }
-    #recordsTable th, #recordsTable td { border: 1px solid #ccc; padding: 8px; }
-    #recordsTable th { background-color: #f0f0f0; }
-    #columns { display: flex; gap: 50px; }
-    #listColumn { flex: 1; }
-    #tableColumn { flex: 2; }
-    .json-output { font-size: 0.85rem; color: #555; white-space: pre-wrap; margin-top: 4px; display:none; }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Museum Object Records Demo with Wikidata</title>
+<style>
+body { font-family: sans-serif; padding: 20px; }
+label { display:block; margin-top: 10px; }
+input, button { padding: 6px; font-size: 1rem; }
+#status { margin-top: 15px; font-style: italic; color: #333; font-weight: bold; }
+#objectNamesList p { cursor: pointer; color: blue; text-decoration: underline; }
+#recordsTable { margin-top: 20px; border-collapse: collapse; width: 100%; }
+#recordsTable th, #recordsTable td { border: 1px solid #ccc; padding: 8px; }
+#recordsTable th { background-color: #f0f0f0; }
+#columns { display: flex; gap: 50px; }
+#listColumn { flex: 1; }
+#tableColumn { flex: 2; }
+.json-output { font-size: 0.85rem; color: #555; white-space: pre-wrap; margin-top: 4px; display:none; }
+</style>
 </head>
 <body>
-  <h1>Museum Object Records Demo with Getty Reconcile</h1>
+<h1>Museum Object Records Demo with Wikidata</h1>
 
-  <p>Enter your MuseumData.uk API token and an object name (or keyword).</p>
+<p>Enter your MuseumData.uk API token and an object name (or keyword).</p>
 
-  <label>API Token:<br>
-    <input id="token" type="password" placeholder="Enter API token" />
-  </label>
+<label>API Token:<br>
+  <input id="token" type="password" placeholder="Enter API token" />
+</label>
 
-  <label>Search Term (object name):<br>
-    <input id="objectName" type="text" placeholder="e.g. sceatta, brooch, vase..." />
-  </label>
+<label>Search Term (object name):<br>
+  <input id="objectName" type="text" placeholder="e.g. sceatta, brooch, vase..." />
+</label>
 
-  <button id="runBtn">Fetch Records</button>
+<button id="runBtn">Fetch Records</button>
 
-  <div id="status">Status will appear here...</div>
+<div id="status">Status will appear here...</div>
 
-  <div id="columns">
-    <div id="listColumn">
-      <h2>Object Names</h2>
-      <div id="objectNamesList"></div>
-    </div>
-    <div id="tableColumn">
-      <h2>Records</h2>
-      <table id="recordsTable">
-        <thead>
-          <tr>
-            <th>Object Names</th>
-            <th>Title</th>
-            <th>Collection</th>
-            <th>Full Record</th>
-          </tr>
-        </thead>
-        <tbody></tbody>
-      </table>
-    </div>
+<div id="columns">
+  <div id="listColumn">
+    <h2>Object Names</h2>
+    <div id="objectNamesList"></div>
   </div>
+  <div id="tableColumn">
+    <h2>Records</h2>
+    <table id="recordsTable">
+      <thead>
+        <tr>
+          <th>Object Names</th>
+          <th>Title</th>
+          <th>Collection</th>
+          <th>Full Record</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</div>
 
-  <script>
-    const statusEl = document.getElementById('status');
-    const reconcileCache = {};
+<script>
+const statusEl = document.getElementById('status');
+const wikidataCache = {};
 
-    async function fetchAllRecords(token, objectName) {
-      statusEl.textContent = 'Fetching records...';
-      let allData = [];
-      let url = `https://mds-data.ciim.k-int.com/api/v2/search?q=${encodeURIComponent(objectName)}&field=${encodeURIComponent('object_name:' + objectName)}`;
+async function fetchAllRecords(token, objectName) {
+  statusEl.textContent = 'Fetching records...';
+  let allData = [];
+  let url = `https://mds-data.ciim.k-int.com/api/v2/search?q=${encodeURIComponent(objectName)}&field=${encodeURIComponent('object_name:' + objectName)}`;
 
-      while (url) {
-        const res = await fetch(url, {
-          method: 'GET',
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-        if (!res.ok) {
-          throw new Error('API request failed: ' + res.status + ' ' + (await res.text()));
-        }
-        const data = await res.json();
-        allData = allData.concat(data.data || []);
-        statusEl.textContent = `Fetched ${allData.length} of ${data.stats.total} records...`;
-        url = data.navigation?.next || null;
-      }
-
-      statusEl.textContent = `All ${allData.length} records fetched.`;
-      return allData;
-    }
-
-    function extractObjectNames(records) {
-      const freq = {};
-      for (const rec of records) {
-        const names = rec?.summary?.object_name || [];
-        for (const name of names) {
-          const cleanName = name.trim();
-          if (cleanName) freq[cleanName] = (freq[cleanName] || 0) + 1;
-        }
-      }
-      return freq;
-    }
-
-    async function reconcileTerm(term) {
-      if (reconcileCache[term]) return reconcileCache[term];
-
-      const endpoint = 'https://services.getty.edu/vocab/reconcile/';
-      const body = { queries: { q0: { query: term, type: "/aat" } } };
-
-      try {
-        const res = await fetch(endpoint, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body)
-        });
-        if (!res.ok) throw new Error(`Reconcile failed: ${res.status}`);
-        const data = await res.json();
-        const candidates = data.queries.q0.candidates || [];
-        reconcileCache[term] = candidates;
-        return candidates;
-      } catch (err) {
-        console.error('Reconcile error:', err);
-        reconcileCache[term] = [{ name: 'Error / CORS?', score: 0 }];
-        return reconcileCache[term];
-      }
-    }
-
-    function renderList(freqMap, records) {
-      const container = document.getElementById('objectNamesList');
-      container.innerHTML = '';
-
-      Object.entries(freqMap)
-        .sort((a, b) => b[1] - a[1])
-        .forEach(([name, count]) => {
-          const p = document.createElement('p');
-          p.textContent = `${name} (${count}) — Reconciling...`;
-          container.appendChild(p);
-
-          reconcileTerm(name).then(candidates => {
-            const best = candidates[0] || { name: 'No match', score: 0 };
-            p.textContent = `${name} (${count}) — Best: ${best.name} (score: ${best.score})`;
-
-            const toggle = document.createElement('button');
-            toggle.textContent = 'Show Candidates';
-            p.appendChild(toggle);
-
-            const jsonDiv = document.createElement('div');
-            jsonDiv.className = 'json-output';
-            jsonDiv.textContent = JSON.stringify(candidates, null, 2);
-            p.appendChild(jsonDiv);
-
-            toggle.addEventListener('click', () => {
-              const isHidden = jsonDiv.style.display === 'none';
-              jsonDiv.style.display = isHidden ? 'block' : 'none';
-              toggle.textContent = isHidden ? 'Hide Candidates' : 'Show Candidates';
-            });
-          });
-
-          p.addEventListener('click', () => renderTable(name, records));
-        });
-    }
-
-    function renderTable(objectName, records) {
-      const tbody = document.querySelector('#recordsTable tbody');
-      tbody.innerHTML = '';
-
-      const filtered = records.filter(rec => rec?.summary?.object_name?.includes(objectName));
-      filtered.forEach(rec => {
-        const tr = document.createElement('tr');
-
-        const objNames = document.createElement('td');
-        objNames.textContent = (rec.summary.object_name || []).join(', ');
-        tr.appendChild(objNames);
-
-        const title = document.createElement('td');
-        title.textContent = (rec.summary.title || []).join(', ');
-        tr.appendChild(title);
-
-        const collection = document.createElement('td');
-        collection.textContent = (rec.summary.collection || []).join(', ');
-        tr.appendChild(collection);
-
-        const linkTd = document.createElement('td');
-        const link = document.createElement('a');
-        link.href = `https://museumdata.uk/object-search/object/?pid=${(rec.summary.pid || [])[0]}`;
-        link.textContent = 'Full record';
-        link.target = '_blank';
-        linkTd.appendChild(link);
-        tr.appendChild(linkTd);
-
-        tbody.appendChild(tr);
-      });
-    }
-
-    document.getElementById('runBtn').addEventListener('click', async () => {
-      const token = document.getElementById('token').value.trim();
-      const objectName = document.getElementById('objectName').value.trim();
-
-      if (!token || !objectName) {
-        alert('Please enter both token and a search term.');
-        return;
-      }
-
-      try {
-        const records = await fetchAllRecords(token, objectName);
-        if (records.length === 0) {
-          statusEl.textContent = 'No records found for this search.';
-          return;
-        }
-
-        const freqMap = extractObjectNames(records);
-        renderList(freqMap, records);
-      } catch (e) {
-        statusEl.textContent = 'Error: ' + e.message;
-        console.error(e);
-      }
+  while (url) {
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: { 'Authorization': `Bearer ${token}` }
     });
-  </script>
+    if (!res.ok) throw new Error('API request failed: ' + res.status + ' ' + (await res.text()));
+    const data = await res.json();
+    allData = allData.concat(data.data || []);
+    statusEl.textContent = `Fetched ${allData.length} of ${data.stats.total} records...`;
+    url = data.navigation?.next || null;
+  }
+
+  statusEl.textContent = `All ${allData.length} records fetched.`;
+  return allData;
+}
+
+function extractObjectNames(records) {
+  const freq = {};
+  for (const rec of records) {
+    const names = rec?.summary?.object_name || [];
+    for (const name of names) {
+      const cleanName = name.trim();
+      if (cleanName) freq[cleanName] = (freq[cleanName] || 0) + 1;
+    }
+  }
+  return freq;
+}
+
+// === Wikidata search and categories ===
+async function fetchWikidata(term) {
+  if (wikidataCache[term]) return wikidataCache[term];
+
+  try {
+    // 1. Search for the term
+    const searchUrl = `https://www.wikidata.org/w/api.php?action=wbsearchentities&format=json&language=en&type=item&origin=*&search=${encodeURIComponent(term)}`;
+    const searchRes = await fetch(searchUrl);
+    const searchData = await searchRes.json();
+    if (!searchData.search || searchData.search.length === 0) {
+      wikidataCache[term] = { label: "No match", aat: null, wiki: null, categories: [] };
+      return wikidataCache[term];
+    }
+    const item = searchData.search[0]; // best match
+
+    // 2. Get AAT PID (P2936) and Wikipedia link
+    const entityUrl = `https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${item.id}&props=claims|sitelinks&format=json&origin=*`;
+    const entityRes = await fetch(entityUrl);
+    const entityData = await entityRes.json();
+    const claims = entityData.entities[item.id].claims;
+    const sitelinks = entityData.entities[item.id].sitelinks;
+
+    let aat = null;
+    if (claims && claims.P2936) {
+      aat = claims.P2936.map(cl => cl.mainsnak.datavalue?.value).filter(v => v)[0];
+    }
+
+    let wikiUrl = null;
+    if (sitelinks && sitelinks.enwiki) {
+      wikiUrl = `https://en.wikipedia.org/wiki/${encodeURIComponent(sitelinks.enwiki.title)}`;
+    }
+
+    // 3. Get categories from Wikipedia API
+    let categories = [];
+    if (wikiUrl) {
+      const catRes = await fetch(`https://en.wikipedia.org/w/api.php?action=query&prop=categories&titles=${encodeURIComponent(sitelinks.enwiki.title)}&format=json&origin=*`);
+      const catData = await catRes.json();
+      const pages = catData.query.pages;
+      categories = Object.values(pages)[0].categories?.map(c => c.title.replace('Category:', '')) || [];
+    }
+
+    const result = { label: item.label, aat, wiki: wikiUrl, categories };
+    wikidataCache[term] = result;
+    return result;
+
+  } catch (err) {
+    console.error('Wikidata fetch error:', err);
+    wikidataCache[term] = { label: "Error", aat: null, wiki: null, categories: [] };
+    return wikidataCache[term];
+  }
+}
+
+// === Render object names with Wikidata info ===
+function renderList(freqMap, records) {
+  const container = document.getElementById('objectNamesList');
+  container.innerHTML = '';
+
+  Object.entries(freqMap).sort((a,b)=>b[1]-a[1]).forEach(([name, count])=>{
+    const p = document.createElement('p');
+    p.textContent = `${name} (${count}) — Loading Wikidata...`;
+    container.appendChild(p);
+
+    fetchWikidata(name).then(data=>{
+      p.textContent = `${name} (${count}) — Wikidata: ${data.label}${data.aat ? ' | AAT: ' + data.aat : ''}`;
+      if(data.wiki) p.textContent += ` | Wikipedia`;
+
+      const toggle = document.createElement('button');
+      toggle.textContent = 'Show Full JSON';
+      p.appendChild(toggle);
+
+      const jsonDiv = document.createElement('div');
+      jsonDiv.className = 'json-output';
+      jsonDiv.textContent = JSON.stringify(data, null, 2);
+      p.appendChild(jsonDiv);
+
+      toggle.addEventListener('click', ()=>{
+        const isHidden = jsonDiv.style.display === 'none';
+        jsonDiv.style.display = isHidden ? 'block' : 'none';
+        toggle.textContent = isHidden ? 'Hide JSON' : 'Show Full JSON';
+      });
+    });
+
+    p.addEventListener('click', () => renderTable(name, records));
+  });
+}
+
+// === Render record table ===
+function renderTable(objectName, records) {
+  const tbody = document.querySelector('#recordsTable tbody');
+  tbody.innerHTML = '';
+
+  const filtered = records.filter(rec => rec?.summary?.object_name?.includes(objectName));
+  filtered.forEach(rec => {
+    const tr = document.createElement('tr');
+
+    const objNames = document.createElement('td');
+    objNames.textContent = (rec.summary.object_name || []).join(', ');
+    tr.appendChild(objNames);
+
+    const title = document.createElement('td');
+    title.textContent = (rec.summary.title || []).join(', ');
+    tr.appendChild(title);
+
+    const collection = document.createElement('td');
+    collection.textContent = (rec.summary.collection || []).join(', ');
+    tr.appendChild(collection);
+
+    const linkTd = document.createElement('td');
+    const link = document.createElement('a');
+    link.href = `https://museumdata.uk/object-search/object/?pid=${(rec.summary.pid || [])[0]}`;
+    link.textContent = 'Full record';
+    link.target = '_blank';
+    linkTd.appendChild(link);
+    tr.appendChild(linkTd);
+
+    tbody.appendChild(tr);
+  });
+}
+
+// === Run button ===
+document.getElementById('runBtn').addEventListener('click', async ()=>{
+  const token = document.getElementById('token').value.trim();
+  const objectName = document.getElementById('objectName').value.trim();
+
+  if(!token || !objectName){
+    alert('Please enter both token and a search term.');
+    return;
+  }
+
+  try{
+    const records = await fetchAllRecords(token, objectName);
+    if(records.length === 0){
+      statusEl.textContent = 'No records found for this search.';
+      return;
+    }
+
+    const freqMap = extractObjectNames(records);
+    renderList(freqMap, records);
+  }catch(e){
+    statusEl.textContent = 'Error: ' + e.message;
+    console.error(e);
+  }
+});
+</script>
 </body>
 </html>
